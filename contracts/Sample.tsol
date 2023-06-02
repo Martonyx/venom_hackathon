@@ -1,0 +1,129 @@
+pragma ever-solidity >= 0.62.0;
+pragma AbiHeader expire;
+pragma AbiHeader pubkey;
+
+import "tip4/contracts/CollectionBase.tsol";
+
+
+contract Sample is CollectionBase {
+    uint static nonce;
+
+    address public owner;
+    uint256 public ticketPrice;
+    uint256 public totalTickets;
+    uint256 public remainingTickets;
+    uint256 public winnerTicketNumber;
+    address public winnerAddress;
+
+    mapping(address => uint256) public ticketBalance;
+
+    event TicketPurchased(address indexed buyer, uint256 amount);
+    event WinnerSelected(address indexed winnerAddress, uint256 indexed ticketNumber);
+    event Received(address sender, uint256 amount);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function.");
+        _;
+    }
+
+    constructor(
+        TvmCell codeNft, 
+        TvmCell codeIndex,
+        TvmCell codeIndexBasis,
+        string json,
+        uint256 _ticketPrice,
+        uint256 _totalTickets) 
+        
+    CollectionBase(codeNft, codeIndex, codeIndexBasis, json) public {
+
+        tvm.accept();
+        owner = msg.sender;
+        ticketPrice = _ticketPrice;
+        totalTickets = _totalTickets;
+        remainingTickets = _totalTickets;
+    }
+
+    function buyTickets(uint256 _amount) external internalMsg {
+        
+        require(_amount > 0, "Amount should be greater than zero.");
+        require(msg.value >= ticketPrice * _amount, "Insufficient payment.");
+
+        uint256 maxTicketsToBuy = (remainingTickets * 20) / 100;
+        require(_amount <= maxTicketsToBuy, "You can't buy more than 20% of the remaining tickets.");
+
+        tvm.accept();
+        ticketBalance[msg.sender] += _amount;
+        remainingTickets -= _amount;
+
+        emit TicketPurchased(msg.sender, _amount);
+    }
+
+    function fulfillRandomness() internal {
+        uint256 randomNumber = rnd.next();
+
+        winnerTicketNumber = (randomNumber % totalTickets) + 1;
+        winnerAddress = address(this);
+        address[] addresses = new address[](totalTickets);
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < totalTickets; i++) {
+            address addr = address(uint160(i)); // Convert uint256 to address
+            if (ticketBalance[addr] > 0) {
+                addresses[index] = addr;
+                index++;
+            }
+        }
+
+        for (uint256 i = 0; i < index; i++) {
+            if (winnerTicketNumber <= ticketBalance[addresses[i]]) {
+                winnerAddress = addresses[i];
+                break;
+            }
+            winnerTicketNumber -= ticketBalance[addresses[i]];
+        }
+
+        emit WinnerSelected(winnerAddress, winnerTicketNumber);
+        mint();
+    }
+
+    function mint() internal internalMsg {
+        _mintNft(_json);
+    }
+
+    function requestRandomNumber() external onlyOwner {
+        require(remainingTickets == 0, "Raffle is not yet completed.");
+        fulfillRandomness();
+    }
+
+
+    function withdrawFunds() external onlyOwner {
+        require(address(this).balance > 0, "Contract balance is zero.");
+
+        uint256 amount = address(this).balance;
+        (bool success, ) = owner.call{value: amount}("");
+        require(success, "Withdrawal failed.");
+    }
+
+    function getTicketPrice() public view returns (uint256) {
+    return ticketPrice;
+    }
+
+    function getTotalTickets() public view returns (uint256) {
+    return totalTickets;
+    }
+
+    function getRemainingTickets() public view returns (uint256) {
+    return remainingTickets;
+    }
+
+    function getWinnerAddress() public view returns (address) {
+        return winnerAddress;
+    }
+
+
+    receive() external {
+        emit Received(msg.sender, msg.value);
+    }
+
+    fallback() external {}
+}
